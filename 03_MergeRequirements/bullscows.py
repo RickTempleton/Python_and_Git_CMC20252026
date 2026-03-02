@@ -2,7 +2,7 @@ from collections import Counter
 from random import choice
 import argparse
 from urllib.request import urlopen
-
+from cowsay import cowsay
 
 def bullscows(guess, secret):
     bulls = sum(g == s for g, s in zip(guess, secret))
@@ -37,7 +37,7 @@ def ask(prompt, valid = None):
 
 
 def inform(format_string, bulls, cows):
-    print(format_string.format(bulls, cows))
+    print(cowsay(format_string.format(bulls, cows)))
 
 
 
