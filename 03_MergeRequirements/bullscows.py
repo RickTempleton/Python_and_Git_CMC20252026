@@ -33,8 +33,7 @@ def ask(prompt, valid = None):
         s = input(prompt).strip().lower()
         if valid is None or s in valid:
             return s
-        print("Недопустимое слово. Попробуйте снова.")
-
+        print(cowsay("Недопустимое слово. Попробуйте снова."))
 
 def inform(format_string, bulls, cows):
     print(cowsay(format_string.format(bulls, cows)))
