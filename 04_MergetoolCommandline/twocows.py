@@ -8,6 +8,9 @@ COWS = ['bud-frogs', 'kiss', 'dragon', 'supermilker', 'head-in', 'TuxStab', 'ele
 
 class twocows(cmd.Cmd):
     prompt = "twocows> "
+    STR_SPLIT = "reply"
+    PARAMS = ["eyes=", "tongue="]
+
 
     def _two_cowsay(self, name_1, messenge_1, params_1, name_2, messenge_2, params_2, cowthink = False):
         """The realization of a dialogue between two cows"""
@@ -41,7 +44,7 @@ class twocows(cmd.Cmd):
         if h1 < h2:
             lines_1 = ([" " * w1] * (h2 - h1)) + lines_1
         if h2 < h1:
-            lines_2 = ""
+            lines_2 = ([""] * (h1 - h2)) + lines_2
 
         eps = "  "
         for a, b in zip(lines_1, lines_2):
@@ -76,13 +79,12 @@ class twocows(cmd.Cmd):
     def _parse_2(self, arg):
         """Parse the input argument for 2 cows"""
         arg = shlex.split(arg)
-        str_split = "reply"
 
-        if str_split not in arg:
-            print(f"Нет {str_split}")
+        if self.STR_SPLIT not in arg:
+            print(f"Нет {self.STR_SPLIT}")
             return
 
-        pos = arg.index(str_split)
+        pos = arg.index(self.STR_SPLIT)
         cow_1 = arg[:pos]
         cow_2 = arg[pos + 1:]
         
@@ -124,6 +126,38 @@ class twocows(cmd.Cmd):
                 print(cowsay.make_bubble(param[1], **param[2]))
             except Exception as er:
                 print(er)
+
+
+    def _complete_cow_name(self, text, line, begidx, endidx):
+        """Completion for cow names and params"""
+        try:
+            words = shlex.split(line[:begidx] + ".")
+        except ValueError:
+            return []
+
+
+        if self.STR_SPLIT in words:
+            flag_split = []
+            words = words[words.index(self.STR_SPLIT):]
+        else:
+            flag_split = [self.STR_SPLIT]
+            words = words[1:]
+
+
+        if len(words) < 2:
+            return ["\"Hellow!\""] if not text else []
+
+        if len(words) == 2:
+            return [x for x in COWS + self.PARAMS + flag_split if x.startswith(text) or not text]
+
+        if len(words) > 2:
+            return [x for x in self.PARAMS + flag_split if x.startswith(text) or not text] 
+
+    def complete_cowsay(self, text, line, begidx, endidx):
+        return self._complete_cow_name(text, line, begidx, endidx)
+
+    def complete_cowthink(self, text, line, begidx, endidx):
+        return self._complete_cow_name(text, line, begidx, endidx)
         
 
 
