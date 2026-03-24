@@ -1,207 +1,152 @@
 #!/usr/bin/env python3
 
+import asyncio
+import ast
+import shlex
+import cowsay
+
 HOST = "0.0.0.0"
 PORT = 1337
 
-import asyncio
-import shlex
-import cowsay
-import cmd
+clients = {}
 
-clients = {}   
-COWS = set(cowsay.list_cows())
+all_cows = set(cowsay.list_cows())
 
 
 def free_cows():
-    return sorted(COWS - set(clients))
+    """Свободные имена коров."""
+    return sorted(all_cows - set(clients))
 
 
-class CowShell(cmd.Cmd):
-    prompt = ""
+async def send(writer, req_id, text):
+    """
+    Отправить клиенту кортеж:
+    (req_id, text)
+    """
+    writer.write((repr((req_id, text)) + "\n").encode())
+    await writer.drain()
 
-    def __init__(self, writer):
-        super().__init__()
-        self.name = None
-        self.writer = writer
 
-    async def send(self, text=""):
-        self.writer.write((text + "\n").encode())
-        await self.writer.drain()
+async def process_command(user, writer, req_id, command, args):
+    """
+    Сервер получает уже готовые данные:
+    command -- строка
+    args    -- список аргументов
 
-    def do_who(self, arg):
-        """who — список зарегистрированных пользователей"""
-        if arg.strip():
-            asyncio.create_task(self.send("usage: who"))
-            return
-        asyncio.create_task(self.send(" ".join(sorted(clients)) or "nobody"))
+    Клиент уже проверил синтаксис команды,
+    поэтому сервер занимается только логикой чата.
+    """
 
-    def do_cows(self, arg):
-        """cows — свободные коровы"""
-        if arg.strip():
-            asyncio.create_task(self.send("usage: cows"))
-            return
-        asyncio.create_task(self.send(" ".join(free_cows()) or "no free cows"))
+    disconnect = False
+    response = "unknown command"
 
-    def do_login(self, arg):
-        """login NAME — зарегистрироваться"""
-        try:
-            args = shlex.split(arg)
-        except ValueError:
-            asyncio.create_task(self.send("parse error"))
-            return
+    match command:
+        case "who":
+            response = " ".join(sorted(clients)) or "nobody"
 
-        if len(args) != 1:
-            asyncio.create_task(self.send("usage: login NAME"))
-            return
+        case "cows":
+            response = " ".join(free_cows()) or "no free cows"
 
-        if self.name is not None:
-            asyncio.create_task(self.send("already logged in"))
-            return
+        case "login":
+            name = args[0]
 
-        new = args[0]
+            if user["name"] is not None:
+                response = "already logged in"
+            elif name not in all_cows:
+                response = "no such cow"
+            elif name in clients:
+                response = "name is busy"
+            else:
+                user["name"] = name
+                clients[name] = user["queue"]
+                response = f"logged in as {name}"
 
-        if new not in COWS:
-            asyncio.create_task(self.send("no such cow"))
-            return
+        case "say":
+            if user["name"] is None:
+                response = "login first"
+            else:
+                target = args[0]
+                text = args[1]
 
-        if new in clients:
-            asyncio.create_task(self.send("name is busy"))
-            return
+                if target not in clients:
+                    response = "target not online"
+                else:
+                    msg = cowsay.cowsay(text, cow=user["name"])
+                    await clients[target].put(msg)
+                    response = f"sent to {target}"
 
-        clients[new] = asyncio.Queue()
-        self.name = new
+        case "yield":
+            if user["name"] is None:
+                response = "login first"
+            else:
+                text = args[0]
+                msg = cowsay.cowsay(text, cow=user["name"])
 
-        asyncio.create_task(self.send(f"logged in as {new}"))
+                for name, q in clients.items():
+                    if name != user["name"]:
+                        await q.put(msg)
 
-    def do_say(self, arg):
-        """say NAME TEXT — личное сообщение"""
-        if self.name is None:
-            asyncio.create_task(self.send("login first"))
-            return
+                response = "sent to everyone"
 
-        try:
-            args = shlex.split(arg)
-        except ValueError:
-            asyncio.create_task(self.send("parse error"))
-            return
+        case "quit":
+            response = "bye"
+            disconnect = True
+        
+        case _:
+            response = "Error"
 
-        if len(args) < 2:
-            asyncio.create_task(self.send("usage: say NAME TEXT"))
-            return
 
-        target = args[0]
-        text = " ".join(args[1:])
-
-        if target not in clients:
-            asyncio.create_task(self.send("target not online"))
-            return
-
-        msg = cowsay.cowsay(text, cow=self.name)
-        asyncio.create_task(clients[target].put(msg))
-        asyncio.create_task(self.send(f"sent to {target}"))
-
-    def do_yield(self, arg):
-        """yield TEXT — сообщение всем"""
-        if self.name is None:
-            asyncio.create_task(self.send("login first"))
-            return
-
-        try:
-            args = shlex.split(arg)
-        except ValueError:
-            asyncio.create_task(self.send("parse error"))
-            return
-
-        if not args:
-            asyncio.create_task(self.send("usage: yield TEXT"))
-            return
-
-        text = " ".join(args)
-        msg = cowsay.cowsay(text, cow=self.name)
-
-        for name, q in clients.items():
-            if name != self.name:
-                asyncio.create_task(q.put(msg))
-
-        asyncio.create_task(self.send("sent to everyone"))
-
-    def do_quit(self, arg):
-        """quit — выход"""
-        if arg.strip():
-            asyncio.create_task(self.send("usage: quit"))
-            return
-        return True
-
-    def do_help(self, arg):
-        """help — список команд"""
-        if arg.strip():
-            asyncio.create_task(self.send("usage: help"))
-            return
-
-        cmds = [
-            "who",
-            "cows",
-            "login NAME",
-            "say NAME TEXT",
-            "yield TEXT",
-            "quit",
-            "help",
-        ]
-        asyncio.create_task(self.send("\n".join(cmds)))
-
-    def default(self, line):
-        asyncio.create_task(self.send("unknown command"))
+    await send(writer, req_id, response)
+    return disconnect
 
 
 async def chat(reader, writer):
-    shell = CowShell(writer)
+    """Обработка одного клиента."""
 
-    await shell.send("type help")
+    user = {
+        "name": None,
+        "queue": asyncio.Queue(),
+    }
 
-    read_task = asyncio.create_task(reader.readline())
-    recv_task = None
+    await send(writer, 0, "Please login")
 
     try:
-        while not reader.at_eof():
-            tasks = [read_task]
+        while True:
+            read_task = asyncio.create_task(reader.readline())
+            msg_task = asyncio.create_task(user["queue"].get())
 
-            if shell.name is not None:
-                if recv_task is None:
-                    recv_task = asyncio.create_task(clients[shell.name].get())
-                tasks.append(recv_task)
-
-            done, _ = await asyncio.wait(
-                tasks,
+            done, pending = await asyncio.wait(
+                [read_task, msg_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            for task in done:
-                if task is read_task:
-                    data = task.result()
-                    if not data:
-                        return
+            if read_task in done:
+                data = read_task.result()
 
-                    line = data.decode().strip()
-                    read_task = asyncio.create_task(reader.readline())
+                if not data:
+                    msg_task.cancel()
+                    break
 
-                    result = shell.onecmd(line)
+                msg_task.cancel()
 
-                    if result:
-                        return
+                try:
+                    req_id, command, args = ast.literal_eval(data.decode().strip())
+                except Exception:
+                    await send(writer, 0, "bad request format")
+                    continue
 
-                elif recv_task is not None and task is recv_task:
-                    msg = task.result()
-                    writer.write(("\n" + msg + "\n").encode())
-                    await writer.drain()
-                    recv_task = asyncio.create_task(clients[shell.name].get())
+                if await process_command(user, writer, req_id, command, args):
+                    break
+
+            if msg_task in done:
+                text = msg_task.result()
+
+                read_task.cancel()
+                await send(writer, 0, text)
 
     finally:
-        read_task.cancel()
-        if recv_task is not None:
-            recv_task.cancel()
-
-        if shell.name is not None and shell.name in clients:
-            del clients[shell.name]
+        if user["name"] is not None:
+            clients.pop(user["name"], None)
 
         writer.close()
         await writer.wait_closed()
